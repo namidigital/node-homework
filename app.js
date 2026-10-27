@@ -1,18 +1,31 @@
 // app.js
-// The main Express application. Compare this to assignment2/sampleHTTP.js:
-// Express handles the routing, headers, and JSON parsing that we had to
-// do by hand there. Analogy: going from manual valves to an automated
-// control system.
+// The main Express application for the todo backend.
+//
+// MIDDLEWARE ORDER MATTERS. Express runs everything top to bottom:
+//   1. express.json()   -> parse JSON bodies first, so routes can read req.body
+//   2. routes           -> the real work
+//   3. not-found        -> catches anything no route handled (404)
+//   4. error-handler    -> catches anything that called next(error) (500)
+// Analogy: a process line. Filter first, then the equipment, then the
+// overflow drain, then the emergency relief at the very end.
 
 const express = require("express");
 const timeRouter = require("./routes/timeRoutes");
+const userRouter = require("./routes/userRoutes");
+const notFound = require("./middleware/not-found");
+const errorHandler = require("./middleware/error-handler");
+
+// Temporary in-memory "database" (replaced by PostgreSQL later in the course).
+global.user_id = null; // the currently logged-on user
+global.users = []; // all registered users
+global.tasks = []; // tasks (used in a later assignment)
 
 const app = express();
 
-// Middleware that reads JSON request bodies and puts them on req.body.
-// (In sampleHTTP.js we had to collect "data" chunks and JSON.parse ourselves.)
+// 1. Built-in middleware: reads JSON request bodies into req.body.
 app.use(express.json());
 
+// 2. Routes
 app.get("/", (req, res) => {
   res.send("Hello, World!");
 });
@@ -23,21 +36,18 @@ app.post("/testpost", (req, res) => {
   });
 });
 
-// Mount the time routes under /api, so /time becomes /api/time, etc.
-app.use("/api", timeRouter);
+app.use("/api", timeRouter); // /api/time, /api/echo (from Week 2)
+app.use("/api/users", userRouter); // /api/users/register, /logon, /logoff
 
-// OPTIONAL Task 8: catch-all for anything not handled above.
-// Must come AFTER the real routes. Express 5 needs "/{*splat}", not "*".
-app.all("/{*splat}", (req, res) => {
-  res.status(404).json({
-    message: `No route found for ${req.method} ${req.path}`,
-  });
-});
+// 3. Not-found middleware: AFTER all real routes.
+app.use(notFound);
+
+// 4. Error-handler middleware: LAST.
+app.use(errorHandler);
 
 const port = process.env.PORT || 3000;
 
-// OPTIONAL Task 9: check for startup errors (like the port already in use)
-// before announcing success.
+// Check for startup errors (like the port already in use) before announcing success.
 const server = app.listen(port, (error) => {
   if (error) {
     if (error.code === "EADDRINUSE") {
@@ -52,8 +62,7 @@ const server = app.listen(port, (error) => {
   console.log(`Server is listening on port ${port}...`);
 });
 
-// OPTIONAL Task 9: shut down cleanly on Ctrl-C or a stop signal.
-// Analogy: a controlled shutdown procedure instead of just pulling the breaker.
+// Shut down cleanly on Ctrl-C or a stop signal.
 let isShuttingDown = false;
 
 async function shutdown(code = 0) {
