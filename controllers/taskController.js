@@ -5,16 +5,16 @@
 // global.tasks. Every query filters on BOTH the task id AND user_id, so one
 // user can never see or change another user's tasks (authorization).
 //
-// Naming note: JavaScript uses camelCase (isCompleted); the database column is
-// snake_case (is_completed). Queries return it AS "isCompleted" so the API
-// sends back the same shape as before, and Postman tests don't need to change.
+// Naming note: JavaScript uses camelCase (isCompleted) in requests and Joi;
+// the database column is snake_case (is_completed). Responses come straight
+// from the database, so they use is_completed.
 // user_id is never returned: it's internal bookkeeping.
 
 const pool = require("../db/pg-pool");
 const { taskSchema, patchTaskSchema } = require("../validation/taskSchema");
 
 // The columns we send back to the client (no user_id).
-const RETURN_COLUMNS = `id, title, is_completed AS "isCompleted"`;
+const RETURN_COLUMNS = `id, title, is_completed`;
 
 // Turn "7" into 7. Returns null if it isn't a valid number.
 function getTaskId(req) {
