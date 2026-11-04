@@ -10,6 +10,7 @@
 // overflow drain, then the emergency relief at the very end.
 
 const express = require("express");
+const pool = require("./db/pg-pool"); // PostgreSQL connection pool
 const timeRouter = require("./routes/timeRoutes");
 const userRouter = require("./routes/userRoutes");
 const taskRouter = require("./routes/taskRoutes");
@@ -17,10 +18,9 @@ const authMiddleware = require("./middleware/auth");
 const notFound = require("./middleware/not-found");
 const errorHandler = require("./middleware/error-handler");
 
-// Temporary in-memory "database" (replaced by PostgreSQL later in the course).
-global.user_id = null; // the currently logged-on user
-global.users = []; // all registered users
-global.tasks = []; // tasks (used in a later assignment)
+// Users and tasks now live in PostgreSQL (see db/pg-pool.js).
+// global.user_id still remembers who is logged on (replaced in a later lesson).
+global.user_id = null;
 
 const app = express();
 
@@ -28,6 +28,18 @@ const app = express();
 app.use(express.json());
 
 // 2. Routes
+
+// Health check: confirms the app can actually reach the database.
+// Analogy: a pressure gauge on the line to the database.
+app.get("/health", async (req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    res.json({ status: "ok", db: "connected" });
+  } catch (err) {
+    res.status(500).json({ message: `db not connected, error: ${ err.message }` });
+  }
+});
+
 app.get("/", (req, res) => {
   res.send("Hello, World!");
 });
@@ -82,6 +94,10 @@ async function shutdown(code = 0) {
       });
     });
     console.log("HTTP server closed.");
+
+    // Close all PostgreSQL connections after the HTTP server has stopped.
+    await pool.end();
+    console.log("PostgreSQL connection pool closed.");
   } catch (err) {
     console.error("Error during shutdown:", err);
     code = 1;
