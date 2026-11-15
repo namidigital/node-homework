@@ -9,11 +9,13 @@ const {
   show,
   update,
   deleteTask,
+  bulkCreate,
 } = require("../controllers/taskController");
 
 const router = express.Router();
 
 router.get("/", index);
+router.post("/bulk", bulkCreate); // MUST come before "/:id", or Express reads "bulk" as an id
 router.get("/:id", show);
 router.post("/", create);
 router.patch("/:id", update);

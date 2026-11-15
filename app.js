@@ -14,6 +14,7 @@ const prisma = require("./db/prisma"); // Prisma Client (replaces the pg pool)
 const timeRouter = require("./routes/timeRoutes");
 const userRouter = require("./routes/userRoutes");
 const taskRouter = require("./routes/taskRoutes");
+const analyticsRouter = require("./routes/analyticsRoutes");
 const authMiddleware = require("./middleware/auth");
 const notFound = require("./middleware/not-found");
 const errorHandler = require("./middleware/error-handler");
@@ -53,6 +54,7 @@ app.post("/testpost", (req, res) => {
 app.use("/api", timeRouter); // /api/time, /api/echo (from Week 2)
 app.use("/api/users", userRouter); // /api/users/register, /logon, /logoff
 app.use("/api/tasks", authMiddleware, taskRouter); // task routes (PROTECTED)
+app.use("/api/analytics", authMiddleware, analyticsRouter); // analytics (PROTECTED)
 
 // 3. Not-found middleware: AFTER all real routes.
 app.use(notFound);
