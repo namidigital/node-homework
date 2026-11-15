@@ -1,14 +1,14 @@
 // controllers/userController.js
 // Handles user registration, logon, and logoff.
 //
-// NEW THIS WEEK: users live in the PostgreSQL "users" table instead of
-// global.users. Analogy: we moved from a clipboard sign-in sheet (wiped every
-// shift change) to the plant's permanent logbook (survives a restart).
+// NEW THIS WEEK: we talk to the "users" table through Prisma instead of raw SQL.
+// Analogy: same permanent logbook, but now a clerk (Prisma) writes the entries
+// for us from a standard form, so we can't misspell a column or forget a $1.
 // global.user_id still remembers who is logged on (replaced in a later lesson).
 
 const crypto = require("crypto"); // built into Node
 const util = require("util");
-const pool = require("../db/pg-pool");
+const prisma = require("../db/prisma");
 const { userSchema } = require("../validation/userSchema");
 
 // crypto.scrypt uses callbacks; promisify lets us use async/await with it.
@@ -43,26 +43,26 @@ async function register(req, res, next) {
   }
 
   // 2. Hash the password. The plain password is never stored.
-  value.hashed_password = await hashPassword(value.password);
+  value.hashedPassword = await hashPassword(value.password);
+  delete value.password;
+  const { name, email, hashedPassword } = value;
 
-  // 3. INSERT into the database. $1, $2, $3 are placeholders (a "parameterized
-  //    query"): pg fills them in safely, which blocks SQL injection.
-  let result = null;
+  // 3. Create the user. Prisma writes the INSERT for us (and parameterizes it).
+  //    select = which columns to send back (like RETURNING in SQL).
+  let user = null;
   try {
-    result = await pool.query(
-      `INSERT INTO users (email, name, hashed_password)
-       VALUES ($1, $2, $3) RETURNING id, email, name`,
-      [value.email, value.name, value.hashed_password],
-    );
-  } catch (e) {
-    // 23505 = the UNIQUE constraint on email was violated (already registered).
-    if (e.code === "23505") {
+    user = await prisma.user.create({
+      data: { name, email, hashedPassword },
+      select: { name: true, email: true, id: true },
+    });
+  } catch (err) {
+    // P2002 = Prisma's code for a unique constraint violation (email taken).
+    if (err.name === "PrismaClientKnownRequestError" && err.code === "P2002") {
       return res.status(400).json({ message: "That email is already registered." });
     }
-    return next(e); // any other database error goes to the error handler
+    return next(err); // any other database error goes to the error handler
   }
 
-  const user = result.rows[0];
   global.user_id = user.id; // the new user is now "logged on"
 
   // 201 = Created. Only name and email go back: never the id or the hash.
@@ -72,17 +72,16 @@ async function register(req, res, next) {
 // POST /api/users/logon
 async function logon(req, res) {
   if (!req.body) req.body = {};
-  const { email, password } = req.body;
+  let { email, password } = req.body;
 
-  // Look the user up in the database (emails are stored lowercase).
-  const result = await pool.query("SELECT * FROM users WHERE email = $1", [
-    String(email || "").trim().toLowerCase(),
-  ]);
+  // Joi lowercases emails at registration, and Prisma findUnique can't do a
+  // case-insensitive search, so lowercase here too ("Jim@Sample.com" still works).
+  email = String(email || "").trim().toLowerCase();
+  const user = await prisma.user.findUnique({ where: { email } });
 
-  // No rows = no such user. Otherwise, check the password against the hash.
-  const user = result.rows[0];
+  // null = no such user. Otherwise, check the password against the hash.
   const goodCredentials =
-    user && password && (await comparePassword(password, user.hashed_password));
+    user && password && (await comparePassword(password, user.hashedPassword));
 
   if (!goodCredentials) {
     return res.status(401).json({ message: "Authentication failed." });

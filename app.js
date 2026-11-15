@@ -10,7 +10,7 @@
 // overflow drain, then the emergency relief at the very end.
 
 const express = require("express");
-const pool = require("./db/pg-pool"); // PostgreSQL connection pool
+const prisma = require("./db/prisma"); // Prisma Client (replaces the pg pool)
 const timeRouter = require("./routes/timeRoutes");
 const userRouter = require("./routes/userRoutes");
 const taskRouter = require("./routes/taskRoutes");
@@ -18,7 +18,7 @@ const authMiddleware = require("./middleware/auth");
 const notFound = require("./middleware/not-found");
 const errorHandler = require("./middleware/error-handler");
 
-// Users and tasks now live in PostgreSQL (see db/pg-pool.js).
+// Users and tasks live in PostgreSQL, accessed through Prisma (see db/prisma.js).
 // global.user_id still remembers who is logged on (replaced in a later lesson).
 global.user_id = null;
 
@@ -31,12 +31,12 @@ app.use(express.json());
 
 // Health check: confirms the app can actually reach the database.
 // Analogy: a pressure gauge on the line to the database.
-app.get("/health", async (req, res) => {
+app.get('/health', async (req, res) => {
   try {
-    await pool.query("SELECT 1");
-    res.json({ status: "ok", db: "connected" });
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: 'ok', db: 'connected' });
   } catch (err) {
-    res.status(500).json({ message: `db not connected, error: ${ err.message }` });
+    res.status(500).json({ status: 'error', db: 'not connected', error: err.message });
   }
 });
 
@@ -95,9 +95,9 @@ async function shutdown(code = 0) {
     });
     console.log("HTTP server closed.");
 
-    // Close all PostgreSQL connections after the HTTP server has stopped.
-    await pool.end();
-    console.log("PostgreSQL connection pool closed.");
+    // Close the database connections after the HTTP server has stopped.
+    await prisma.$disconnect();
+    console.log("Prisma disconnected");
   } catch (err) {
     console.error("Error during shutdown:", err);
     code = 1;
