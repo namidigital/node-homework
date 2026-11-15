@@ -47,26 +47,59 @@ async function register(req, res, next) {
   delete value.password;
   const { name, email, hashedPassword } = value;
 
-  // 3. Create the user. Prisma writes the INSERT for us (and parameterizes it).
-  //    select = which columns to send back (like RETURNING in SQL).
-  let user = null;
+  // 3. A TRANSACTION: create the user AND 3 welcome tasks as one unit.
+  //    Either everything is saved, or (if anything fails) nothing is.
+  //    Analogy: a lockout/tagout. You don't leave a job half-isolated;
+  //    every step completes, or you back everything out.
   try {
-    user = await prisma.user.create({
-      data: { name, email, hashedPassword },
-      select: { name: true, email: true, id: true },
+    const result = await prisma.$transaction(async (tx) => {
+      // Inside the transaction, use tx (not prisma) so it's all one unit.
+      const newUser = await tx.user.create({
+        data: { email, name, hashedPassword },
+        select: { id: true, email: true, name: true, createdAt: true },
+      });
+
+      const welcomeTaskData = [
+        { title: "Complete your profile", userId: newUser.id, priority: "medium" },
+        { title: "Add your first task", userId: newUser.id, priority: "high" },
+        { title: "Explore the app", userId: newUser.id, priority: "low" },
+      ];
+      await tx.task.createMany({ data: welcomeTaskData });
+
+      // createMany only returns a count, so fetch the tasks to send back.
+      const welcomeTasks = await tx.task.findMany({
+        where: {
+          userId: newUser.id,
+          title: { in: welcomeTaskData.map((t) => t.title) },
+        },
+        select: {
+          id: true,
+          title: true,
+          isCompleted: true,
+          userId: true,
+          priority: true,
+        },
+      });
+
+      return { user: newUser, welcomeTasks };
+    });
+
+    // Store the user ID globally for session management (not secure for production)
+    global.user_id = result.user.id;
+
+    res.status(201).json({
+      user: result.user,
+      welcomeTasks: result.welcomeTasks,
+      transactionStatus: "success",
     });
   } catch (err) {
-    // P2002 = Prisma's code for a unique constraint violation (email taken).
-    if (err.name === "PrismaClientKnownRequestError" && err.code === "P2002") {
-      return res.status(400).json({ message: "That email is already registered." });
+    // P2002 = unique constraint violation: the email is already registered.
+    // The transaction rolled back, so no tasks were created either.
+    if (err.code === "P2002") {
+      return res.status(400).json({ error: "Email already registered" });
     }
-    return next(err); // any other database error goes to the error handler
+    return next(err); // the error handler takes care of other errors
   }
-
-  global.user_id = user.id; // the new user is now "logged on"
-
-  // 201 = Created. Only name and email go back: never the id or the hash.
-  res.status(201).json({ name: user.name, email: user.email });
 }
 
 // POST /api/users/logon
@@ -77,7 +110,12 @@ async function logon(req, res) {
   // Joi lowercases emails at registration, and Prisma findUnique can't do a
   // case-insensitive search, so lowercase here too ("Jim@Sample.com" still works).
   email = String(email || "").trim().toLowerCase();
-  const user = await prisma.user.findUnique({ where: { email } });
+  // Selective loading: only the fields logon needs. The hash is read here
+  // to check the password, but it is never sent back to the client.
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, name: true, email: true, hashedPassword: true },
+  });
 
   // null = no such user. Otherwise, check the password against the hash.
   const goodCredentials =
